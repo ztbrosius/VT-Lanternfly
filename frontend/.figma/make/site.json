@@ -1,0 +1,10 @@
+{
+  "description": "Helps Virginia Tech students identify and report spotted lanternflies, learn about the invasive pest, and build campus awareness through accurate reporting and team challenges.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
