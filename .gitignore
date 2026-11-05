@@ -1,0 +1,141 @@
+# ==========================================
+# VT-Lanternfly .gitignore
+# ==========================================
+
+
+# ------------------------------------------
+# Python
+# ------------------------------------------
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+*.egg-info/
+.eggs/
+build/
+
+
+# ------------------------------------------
+# Environment variables and secrets
+# ------------------------------------------
+
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+secrets.json
+
+
+# ------------------------------------------
+# Backend - Uploaded photographs
+# ------------------------------------------
+
+# Ignore uploaded images, but keep the folder
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+
+# ------------------------------------------
+# Backend - Temporary sighting storage
+# ------------------------------------------
+
+backend/sightings.jsonl
+
+# SQLite and other local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# SQLite temporary files
+*.db-journal
+*.db-shm
+*.db-wal
+
+
+# ------------------------------------------
+# Backend - Generated maps and previews
+# ------------------------------------------
+
+backend/lanternfly_map.html
+backend/.map_previews/
+backend/outputs/
+backend/runs/
+
+
+# ------------------------------------------
+# AI Model - Training and predictions
+# ------------------------------------------
+
+# Training output
+runs/
+train/
+train*/
+wandb/
+
+# Ignore model weights by default
+*.pt
+*.pth
+*.onnx
+
+# Allow the trained lanternfly model
+!backend/models/my_model.pt
+
+
+# ------------------------------------------
+# Frontend - Node.js
+# ------------------------------------------
+
+node_modules/
+dist/
+dist-ssr/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# ------------------------------------------
+# Frontend - Build caches
+# ------------------------------------------
+
+.vite/
+.cache/
+coverage/
+
+
+# ------------------------------------------
+# Editors and operating systems
+# ------------------------------------------
+
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
+
+*.swp
+*.swo
+*~
+
+
+# ------------------------------------------
+# Miscellaneous
+# ------------------------------------------
+
+*.log
+tmp/
+temp/

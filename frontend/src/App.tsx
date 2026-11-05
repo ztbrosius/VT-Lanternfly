@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { uploadPhoto, type UploadResponse } from './services/api'
 
 type Tab = 'map' | 'learn' | 'teams' | 'me'
 type View = Tab | 'capture' | 'verifying' | 'result'
@@ -67,43 +68,137 @@ function Header({ title, onBack, eyebrow }: { title: string; onBack?: () => void
   </header>
 }
 
-function MapScreen({ reports, onReport }: { reports: number; onReport: () => void }) {
+function MapScreen({ onReport }: { onReport: () => void }) {
+  const [summary, setSummary] = useState<{ uploaded: number; detected: number; mapped: number } | null>(null)
+  const [mapVersion, setMapVersion] = useState(0)
+  const [mapError, setMapError] = useState(false)
+
+  const refreshMap = () => {
+    setMapError(false)
+    setMapVersion(version => version + 1)
+    fetch('/api/sightings/summary', { cache: 'no-store' })
+      .then(async response => {
+        if (!response.ok) throw new Error('Map summary unavailable')
+        return response.json()
+      })
+      .then(setSummary)
+      .catch(() => setSummary(null))
+  }
+
+  useEffect(() => { refreshMap() }, [])
+
   return <main className="screen map-screen">
-    <Header title="Good afternoon, Alex" eyebrow="VT LANTERNFLY" />
-    <section className="map-card" aria-label="Aggregated verified sighting heat map">
-      <div className="map-toolbar"><div><strong>Campus activity</strong><span>Verified sightings · coarse grid</span></div><button>7 days⌄</button></div>
-      <div className="map-art">
-        <div className="road road-a" /><div className="road road-b" /><div className="road road-c" /><div className="pond" />
-        <span className="map-label label-1">Drillfield</span><span className="map-label label-2">Duck Pond</span><span className="map-label label-3">Lane Stadium</span>
-        <div className="heat-grid">{Array.from({length:12},(_,n) => <i key={n} className={`heat heat-${n}`} />)}</div>
-        <div className="map-legend"><i/><span>Fewer</span><i/><i/><i/><span>More</span></div>
+    <Header title="Campus sightings" eyebrow="VT LANTERNFLY" />
+    <section className="map-card" aria-label="Interactive spotted lanternfly sighting map">
+      <div className="map-toolbar">
+        <div><strong>Lanternfly sightings</strong><span>AI detections · awaiting review</span></div>
+        <button onClick={refreshMap} aria-label="Refresh map">Refresh ↻</button>
       </div>
-      <p className="privacy-note"><span>◎</span> Locations are grouped to protect privacy</p>
+      <div style={{height:400,background:'#e5efe5',position:'relative'}}>
+        <iframe
+          key={mapVersion}
+          src="/api/map"
+          title="Interactive map of submitted lanternfly photographs"
+          onError={() => setMapError(true)}
+          style={{display:'block',width:'100%',height:'100%',border:0}}
+        />
+        {mapError && <p role="alert" style={{position:'absolute',top:12,left:12,background:'#fff',padding:12}}>
+          Map unavailable. Make sure FastAPI is running on port 8000.
+        </p>}
+      </div>
+      <p className="privacy-note">◎ Showing available photo GPS locations. AI detections are not confirmed sightings.</p>
     </section>
-    <section className="stats-card"><div><p>This week on campus</p><strong>{reports} verified reports</strong></div><span className="trend">↗ 18%</span></section>
-    <section className="campus-goal">
-      <div><small>CAMPUS GOAL</small><strong>Reach 100 verified campus reports before December</strong></div>
-      <div className="bar"><i style={{width: `${Math.min(reports, 100)}%`}} /></div>
-      <p><b>{Math.min(reports, 100)}/100 verified</b><span>{reports >= 100 ? 'Goal reached' : `${100 - reports} to go`}</span></p>
+    <section className="stats-card">
+      <div><p>Locally indexed uploads</p><strong>{summary ? `${summary.mapped} mapped sighting${summary.mapped === 1 ? '' : 's'}` : 'Loading map data…'}</strong></div>
+      <span className="trend">{summary ? `${summary.uploaded} uploads` : '—'}</span>
     </section>
     <section className="tip-card"><div className="tip-icon"><Icon name="leaf" /></div><div><small>SEASONAL TIP · LATE FALL</small><p>Look for egg masses on tree bark, walls, and outdoor furniture.</p></div></section>
     <button className="report-button" onClick={onReport}><Icon name="camera" /> Report a Lanternfly</button>
   </main>
 }
 
-function Capture({ onBack, onTake }: { onBack: () => void; onTake: (stage: string, outcome: Outcome) => void }) {
-  const [stage, setStage] = useState('Adult')
-  const [demo, setDemo] = useState<Outcome | 'random'>('random')
-  const outcomes: Outcome[] = ['confirmed', 'native', 'uncertain']
+function Capture({ onBack }: { onBack: () => void }) {
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<UploadResponse | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!photo) { setPreview(null); return }
+    const url = URL.createObjectURL(photo)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [photo])
+
+  const submit = async () => {
+    if (!photo || uploading) return
+    setUploading(true)
+    setError(null)
+    setResult(null)
+    try { setResult(await uploadPhoto(photo)) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Upload failed') }
+    finally { setUploading(false) }
+  }
+
+  const retryPhoto = () => {
+    setPhoto(null)
+    setResult(null)
+    setError(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
+
   return <main className="capture-screen">
     <div className="camera-top"><button onClick={onBack} aria-label="Back"><Icon name="arrow" /></button><strong>Photograph sighting</strong><span /></div>
-    <div className="viewfinder"><div className="forest-bg"><div className="tree"/><div className="bug"><i/><i/><b/></div></div><div className="focus-frame"><span/><span/><span/><span/></div><p>Center the insect and hold steady</p></div>
+    <div className="viewfinder">
+      {preview ? <img src={preview} alt="Selected sighting" style={{width:'100%',height:'100%',objectFit:'contain'}} /> :
+        <div className="forest-bg"><div className="tree"/><div className="bug"><i/><i/><b/></div></div>}
+      {!preview && <div className="focus-frame"><span/><span/><span/><span/></div>}
+      <p>{preview ? 'Selected photograph' : 'Choose a photograph to check for lanternflies'}</p>
+    </div>
     <div className="capture-panel">
       <div className="safety"><strong>!</strong><p><b>Stay safe</b><br/>Stay on sidewalks. Never climb or step into roads.</p></div>
-      <label>Life stage <span>Optional</span></label>
-      <div className="chips">{stages.map(([name]) => <button key={name} className={stage === name ? 'active' : ''} onClick={() => setStage(name)}>{name}</button>)}</div>
-      <button className="capture-button" onClick={() => onTake(stage, demo === 'random' ? outcomes[Math.floor(Math.random() * 3)] : demo)}><span><Icon name="camera" /></span> Take Photo</button>
-      <button className="gps-note" onClick={() => setDemo(demo === 'random' ? 'confirmed' : demo === 'confirmed' ? 'native' : demo === 'native' ? 'uncertain' : 'random')}>⌖ GPS location and time are recorded at capture <i>{demo !== 'random' ? ` · ${demo}` : ''}</i></button>
+      <label htmlFor="photo-upload">Upload a lanternfly photo</label>
+      <input ref={fileInputRef} id="photo-upload" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,.mpo" onChange={e=>{setPhoto(e.target.files?.[0] ?? null);setResult(null);setError(null)}} style={{display:'block',width:'100%',margin:'12px 0',color:'#1f3329'}} />
+      <button className="capture-button" disabled={!photo || uploading} onClick={submit}><span><Icon name="camera" /></span>{uploading ? 'Uploading...' : 'Upload & check photo'}</button>
+      {error && <p role="alert" style={{color:'#b91c1c',marginTop:12}}>{error}</p>}
+      {result && <section aria-live="polite" style={{background:'#fff',borderRadius:14,padding:16,marginTop:16,color:'#1f3329'}}>
+        <strong>Photo received — metadata and detection results</strong>
+        <p style={{fontSize:13,marginTop:8}}>AI predictions are not confirmed sightings. Detected photos with GPS appear on the development map; no points are awarded yet.</p>
+        <div style={{marginTop:12,padding:12,background:'#f0f7f0',borderRadius:8}}>
+          <strong>AI lanternfly detection</strong>
+          {result.detection.status === 'detected' ? <>
+            <p>Possible lanternfly detected ({result.detection.detection_count} bounding box{result.detection.detection_count === 1 ? '' : 'es'}).</p>
+            {result.detection.detections.map((d, i) => <p key={i} style={{fontSize:13}}>{d.label}: {(d.confidence * 100).toFixed(1)}% model confidence</p>)}
+          </> : result.detection.status === 'not_detected' ?
+            <div role="status" style={{marginTop:12,padding:14,background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:10}}>
+              <strong style={{color:'#92400e'}}>Unable to Identify a Lanternfly</strong>
+              <p style={{marginTop:8,fontSize:14,color:'#92400e'}}>
+                We couldn't clearly identify a spotted lanternfly in your photo.
+                Try taking another picture with better lighting, keeping the lanternfly in focus and clearly visible.
+              </p>
+              <p style={{marginTop:8,fontSize:12,color:'#92400e'}}>
+                This doesn't mean your photo has no lanternfly—the AI may have missed it.
+              </p>
+              <button type="button" onClick={retryPhoto} style={{marginTop:12,padding:'10px 16px',background:'#b45309',color:'#fff',border:0,borderRadius:8,cursor:'pointer',fontWeight:600}}>
+                Try Another Photo
+              </button>
+            </div> :
+            <p role="status">Detector unavailable. Metadata was still extracted. Check the backend logs.</p>}
+          <p style={{fontSize:12}}>Review status: pending. Model predictions require validation before approval.</p>
+        </div>
+        <p style={{marginTop:8}}>File: {result.metadata.file_name}</p>
+        <p>Captured: {result.metadata.timestamp ?? 'Not available in EXIF'}</p>
+        <p>Location: {result.metadata.latitude !== null && result.metadata.longitude !== null ? `${result.metadata.latitude}, ${result.metadata.longitude} (${result.metadata.location_source})` : 'No GPS coordinates in photo'}</p>
+        <p>Camera: {[result.metadata.camera_make,result.metadata.camera_model].filter(Boolean).join(' ') || 'Unknown'}</p>
+        <p>Resolution: {result.metadata.width} × {result.metadata.height}</p>
+        <p style={{fontSize:12,marginTop:8}}>Saved locally for development. AI-detected photos with GPS appear on the map after refreshing; not linked to an account or database.</p>
+      </section>}
+      <p className="gps-note">⌖ Reads existing photo EXIF metadata; no browser location requested.</p>
     </div>
   </main>
 }
@@ -284,7 +379,6 @@ export default function App() {
   const [anonymous, setAnonymous] = useState(false), [pending, setPending] = useState(false)
 
   const setTab = (t: Tab) => { setTabState(t); setView(t) }
-  const take = (s: string, o: Outcome) => { setStage(s); setOutcome(o); setView('verifying'); setPending(true) }
   useEffect(() => { if (view !== 'verifying') return; const id = window.setTimeout(() => setView('result'), 2000); return () => clearTimeout(id) }, [view])
   const applyReward = () => { if (!pending) return; if (outcome === 'confirmed') { setReports(r=>r+1); setReportsThisWeek(r=>r+1); setCampusReports(r=>r+1); setPoints(p=>p+10); if(stage==='Egg mass') { setTeamProgress(p=>p+1); setEggFound(true) } } else if (outcome === 'native') setPoints(p=>p+2); setPending(false) }
 
@@ -304,8 +398,8 @@ export default function App() {
     <button className="mode-toggle" onClick={() => setWireframe(value => !value)} aria-pressed={wireframe}>
       <span>{wireframe ? '◆' : '◇'}</span>{wireframe ? 'View design' : 'Wireframe'}
     </button>
-    {view === 'map' && <MapScreen reports={campusReports} onReport={()=>setView('capture')}/>}
-    {view === 'capture' && <Capture onBack={()=>setTab('map')} onTake={take}/>}
+    {view === 'map' && <MapScreen onReport={()=>setView('capture')}/>}
+    {view === 'capture' && <Capture onBack={()=>setTab('map')}/>}
     {view === 'verifying' && <Verifying onBack={()=>setView('capture')}/>}
     {view === 'result' && <Result outcome={outcome} stage={stage} onDone={done} onLearn={resultLearn} onTeam={resultTeam} onRetake={()=>setView('capture')}/>}
     {view === 'learn' && <Learn passedLessons={passedLessons} passLesson={passLesson}/>}

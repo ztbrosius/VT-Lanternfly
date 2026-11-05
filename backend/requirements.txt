@@ -1,0 +1,11 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.9,<1
+Pillow>=11,<13
+pillow-heif>=1,<2
+# Original standalone map/CSV scripts (not needed for the upload API):
+pandas>=2,<4
+folium>=0.17,<1
+
+# Teammate-trained YOLO11 object detector (includes NumPy/PyTorch dependencies)
+ultralytics>=8.3,<9
