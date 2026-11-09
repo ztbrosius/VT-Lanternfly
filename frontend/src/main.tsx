@@ -1,5 +1,10 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import './styles/global.css'
+import './styles/components.css'
+import './styles/capture.css'
+import './styles/features.css'
+import './styles/map.css'
 import App from './App'
 import './index.css'
 
