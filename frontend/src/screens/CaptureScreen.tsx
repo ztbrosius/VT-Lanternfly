@@ -2,7 +2,7 @@ import {useEffect, useRef, useState} from "react";
 import {uploadPhoto, UploadResponse} from "@/services/api.ts";
 import Icon from '../components/Icon';
 
-export default function Capture({ onBack, onSuccess }: { onBack: () => void; onSuccess: (res: UploadResponse) => void }) {
+export default function Capture({ userId, onBack, onSuccess }: { userId?: number; onBack: () => void; onSuccess: (res: UploadResponse) => void }) {
     const [photo, setPhoto] = useState<File | null>(null)
     const [preview, setPreview] = useState<string | null>(null)
     const [uploading, setUploading] = useState(false)
@@ -23,7 +23,7 @@ export default function Capture({ onBack, onSuccess }: { onBack: () => void; onS
         setError(null)
         setResult(null)
         try {
-            const res = await uploadPhoto(photo)
+            const res = await uploadPhoto(photo, userId)
             setResult(res)
             onSuccess(res)
         }

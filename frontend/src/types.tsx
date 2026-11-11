@@ -5,6 +5,33 @@ export type Tab = 'map' | 'learn' | 'teams' | 'me';
 export type View = Tab | 'capture' | 'verifying' | 'result';
 export type Outcome = 'confirmed' | 'native' | 'uncertain';
 
+// =========================================
+// User profiles
+// =========================================
+export interface UserProfile {
+    id: number;
+    displayName: string;
+    major: string | null;
+    points: number;
+    rank: number;
+    streak: number;
+    reportsTotal: number;
+    reportsThisWeek: number;
+    reportsByStage: { adult: number; nymph: number; eggMass: number };
+    eggFound: boolean;
+    anonymous: boolean;
+    shareWithResearchers: boolean;
+    badges: string[];
+    passedLessons: number[];
+}
+
+export interface LeaderboardEntry {
+    name: string;
+    points: number;
+    isCurrentUser: boolean;
+}
+
+
 // ==========================================
 // Interfaces (Data Models)
 // ==========================================
