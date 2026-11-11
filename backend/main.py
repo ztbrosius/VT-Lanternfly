@@ -1,16 +1,16 @@
 """VT-Lanternfly development API: upload, EXIF extraction, and YOLO inference.
 
-No accounts, automatic verification, points, database or public map feed yet.
+Accounts (register/login) use MySQL via SQLAlchemy; sightings still use local JSONL.
 """
 import hashlib
 import io
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, Response
@@ -26,6 +26,18 @@ from metadata_processor import process_metadata
 from sighting_store import append_sighting, read_sightings
 from map_visualization import generate_map
 
+# User accounts (MySQL via SQLAlchemy)
+import bcrypt
+from fastapi import Depends
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from database import SessionLocal, get_db
+from db_models import Badge, PointEvent, QuizPass, Report, User, UserBadge
+
+
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = Path(os.environ.get("LANTERNFLY_UPLOAD_DIR", BASE_DIR / "uploads"))
 SIGHTINGS_FILE = UPLOAD_DIR.parent / "sightings.jsonl"
@@ -37,7 +49,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8443", "http://127.0.0.1:8443", "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Content-Type"],
 )
 
@@ -45,6 +57,120 @@ app.add_middleware(
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
+    display_name: str = Field(min_length=1, max_length=100)
+    major: str | None = Field(default=None, max_length=100)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except ValueError:
+        return False
+
+
+def _user_points(db: Session, user_id: int) -> int:
+    return db.scalar(
+        select(func.coalesce(func.sum(PointEvent.points), 0)).where(PointEvent.user_id == user_id)
+    )
+
+
+def _user_profile(db: Session, user: User) -> dict:
+    points = _user_points(db, user.id)
+
+    totals = (
+        select(PointEvent.user_id, func.sum(PointEvent.points).label("total"))
+        .group_by(PointEvent.user_id)
+        .subquery()
+    )
+    rank = 1 + db.scalar(select(func.count()).select_from(totals).where(totals.c.total > points))
+
+    approved = select(func.count(Report.id)).where(
+        Report.user_id == user.id, Report.review_status == "approved"
+    )
+    week_start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+
+    return {
+        "id": user.id,
+        "displayName": user.display_name,
+        "major": user.major,
+        "points": points,
+        "rank": rank,
+        "streak": 0,  # still need to implement
+        "reportsTotal": db.scalar(approved),
+        "reportsThisWeek": db.scalar(approved.where(Report.created_at >= week_start)),
+        "eggFound": bool(db.scalar(approved.where(Report.life_stage_verified == "Egg mass"))),
+        "reportsByStage": {
+            "adult": db.scalar(approved.where(Report.life_stage_verified == "Adult")),
+            "nymph": db.scalar(approved.where(Report.life_stage_verified.in_(["Black nymph", "Red nymph"]))),
+            "eggMass": db.scalar(approved.where(Report.life_stage_verified == "Egg mass")),
+        },
+        "anonymous": user.anonymous,
+        "shareWithResearchers": user.share_with_researchers,
+        "badges": list(db.scalars(
+            select(Badge.name).join(UserBadge, UserBadge.badge_id == Badge.id)
+            .where(UserBadge.user_id == user.id)
+        )),
+        "passedLessons": list(db.scalars(
+            select(QuizPass.lesson_index).where(QuizPass.user_id == user.id)
+        )),
+    }
+
+
+@app.post("/api/auth/register", status_code=201)
+def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
+    email = user_data.email.lower()
+    if db.scalar(select(User).where(User.email == email)):
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    new_user = User(
+        email=email,
+        password_hash=_hash_password(user_data.password),
+        display_name=user_data.display_name.strip(),
+        major=(user_data.major or "").strip() or None,
+        anonymous=False,
+    )
+    db.add(new_user)
+    try:
+        db.commit()
+    except IntegrityError:  # two simultaneous sign-ups with the same email
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Email already registered")
+    db.refresh(new_user)
+    return _user_profile(db, new_user)
+
+
+@app.post("/api/auth/login")
+def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.email == credentials.email.lower()))
+    if user is None or not _verify_password(credentials.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    return _user_profile(db, user)
+
+
+@app.exception_handler(OperationalError)
+async def database_unavailable(_request, exc: OperationalError):
+    from fastapi.responses import JSONResponse
+    logger.error("Database error: %s", exc.orig)
+    code = exc.orig.args[0] if exc.orig is not None and exc.orig.args else None
+    if code in (1054, 1146):  # unknown column / table doesn't exist
+        detail = "Database schema is out of date. Re-run schema.sql (see backend logs for the missing column/table)."
+    else:
+        detail = "Database unavailable. Is MySQL running and DATABASE_URL set in backend/.env?"
+    return JSONResponse(status_code=503, content={"detail": detail})
 
 
 def _mapped_sightings() -> list[dict]:
@@ -105,8 +231,64 @@ def sightings_map():
     )
 
 
+def _parse_timestamp(value: str | None) -> datetime | None:
+    """ISO timestamp from metadata -> naive UTC datetime for a MySQL TIMESTAMP column."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _save_report(record: dict, detection: dict, user_id: int | None, life_stage: str | None) -> int | None:
+    """Insert the upload into the MySQL reports table (review_status='pending').
+
+    Runs alongside the JSONL index, not instead of it: if MySQL is down the
+    upload still succeeds and the map keeps working. Returns the report id,
+    or None if the database write failed.
+    """
+    detections = detection.get("detections") or []
+    best = max(detections, key=lambda d: d.get("confidence", 0), default=None)
+    try:
+        with SessionLocal() as db:
+            existing = db.scalar(select(Report).where(Report.photo_hash == record["photo_id"]))
+            if existing is not None:  # same photo uploaded again
+                return existing.id
+            # still need to implement: take the user from a login token instead of trusting a form field.
+            if user_id is not None and db.get(User, user_id) is None:
+                user_id = None
+            report = Report(
+                user_id=user_id,
+                photo_hash=record["photo_id"],
+                stored_name=record["stored_name"],
+                lat=record.get("latitude"),
+                lng=record.get("longitude"),
+                captured_at=_parse_timestamp(record.get("timestamp")),
+                location_source=record.get("location_source"),
+                life_stage_claimed=life_stage,
+                detection_status=detection.get("status"),
+                model_confidence=round(best["confidence"], 4) if best else None,
+                bbox=[d.get("bbox_xyxy") for d in detections] or None,
+                review_status="pending",
+            )
+            db.add(report)
+            db.commit()
+            return report.id
+    except SQLAlchemyError:
+        logger.exception("Could not save report to MySQL; kept in sightings.jsonl only")
+        return None
+
+
 @app.post("/api/sightings", status_code=201)
-async def upload_sighting(photo: UploadFile = File(...)):
+async def upload_sighting(
+    photo: UploadFile = File(...),
+    user_id: int | None = Form(None),
+    life_stage: str | None = Form(None, max_length=50),
+):
     """Validate and store photo; return EXIF metadata and YOLO detections.
 
     Stored files are private and not yet associated with a user or database.
@@ -170,8 +352,11 @@ async def upload_sighting(photo: UploadFile = File(...)):
         except OSError:
             logger.exception("Failed to persist local sighting index")
             raise HTTPException(status_code=500, detail="Could not save sighting locally.")
+        report_id = await run_in_threadpool(_save_report, stored_record, detection, user_id, life_stage)
         return {
-            "message": "Photo received; metadata extracted and AI detection attempted. Indexed locally for the development map; not verified or saved to a database.",
+            "message": "Photo received; metadata extracted and AI detection attempted. "
+                       + ("Saved to the review queue." if report_id else "Indexed locally only (database unavailable)."),
+            "report_id": report_id,
             "photo_id": digest.hexdigest(),
             "metadata": metadata,
             "detection": detection,

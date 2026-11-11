@@ -9,3 +9,10 @@ folium>=0.17,<1
 
 # Teammate-trained YOLO11 object detector (includes NumPy/PyTorch dependencies)
 ultralytics>=8.3,<9
+
+# User accounts / MySQL database
+SQLAlchemy>=2.0,<3
+PyMySQL[rsa]>=1.1,<2   # [rsa] pulls in cryptography, needed for MySQL 8 default auth
+bcrypt>=4.2,<6
+email-validator>=2.1,<3
+python-dotenv>=1.0,<2

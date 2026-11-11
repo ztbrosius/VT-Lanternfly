@@ -1,6 +1,7 @@
 import {useEffect, useState} from "react";
 import Icon from '../components/Icon';
 import BottomNav from '../components/BottomNav';
+import type { Tab, View } from '../types';
 
 export default function WireframePrototype({ onExit }: { onExit: () => void }) {
     const [page, setPage] = useState<View>('map')
