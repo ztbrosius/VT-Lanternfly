@@ -372,3 +372,19 @@ async def upload_sighting(
         raise HTTPException(status_code=400, detail="Could not process image.") from exc
     finally:
         await photo.close()
+
+
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+DIST_DIR = BASE_DIR.parent / "frontend" / "dist"
+
+if DIST_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_frontend(full_path: str):
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        file = DIST_DIR / full_path
+        return FileResponse(file if file.is_file() else DIST_DIR / "index.html")
